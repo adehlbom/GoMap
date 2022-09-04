@@ -14,8 +14,10 @@ import (
 var wg sync.WaitGroup
 
 func main() {
-	fmt.Println("Starting GoMap (https://github.com/adehlbom/GoMap) at " + time.Now().Local().String())
-	ip_address := "45.33.32.156"
+	start := time.Now()
+
+	fmt.Println("Starting GoMap (https://github.com/adehlbom/GoMap) at " + time.Now().Format("2006-01-02 15:04:05"))
+	ip_address := "192.168.0.100"
 	end_port := checkFlags()
 	for port := 1; port <= end_port; port++ {
 		wg.Add(1)
@@ -23,32 +25,35 @@ func main() {
 
 	}
 	wg.Wait()
-
-	fmt.Println("All scanned.")
+	fmt.Printf("All scanned. This took %ds\n", time.Since(start)/1000000000)
 
 }
-func tcp_scan(ip_address string, port int) string {
+func tcp_scan(ip_address string, port int) {
 	defer wg.Done()
 	address := fmt.Sprintf("%s:%d", ip_address, port)
-	conn, err := net.DialTimeout("tcp", address, 1*time.Second)
+	conn, err := net.DialTimeout("tcp", address, 15*time.Second)
 	if err != nil {
-		fmt.Println(err)
+		if port == 22 || port == 80 || port == 53 {
+			fmt.Println(err)
+
+		}
 		//conn.Close()
-		return ""
+		return
+
 	}
 	buffer := make([]byte, 4096)
-	conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+	conn.SetReadDeadline(time.Now().Add(time.Second * 20))
 	numbytesread, err2 := conn.Read(buffer)
+
 	if err2 != nil {
 		fmt.Println(err2)
-		//conn.Close()
-		return ""
-	}
-	fmt.Printf("Port %d open\n", port)
-	fmt.Println(string(buffer[0:numbytesread]))
-	conn.Close()
 
-	return string(buffer[0:numbytesread])
+		//conn.Close()
+		return
+	}
+	fmt.Printf("%d/tcp OPEN | SERVICE: %s \n ", port, string(buffer[0:numbytesread]))
+	//fmt.Println(string(buffer[0:numbytesread]))
+	conn.Close()
 	// Hur och var använder jag defer conn.Close här när jag har flera if-satser som körs efter varandra?
 	//fmt.Println(string(buffer[0:numbytesread]))
 
