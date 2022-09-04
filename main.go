@@ -4,68 +4,53 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/slices"
 )
 
+var wg sync.WaitGroup
+
 func main() {
-
-	activeThreads := 0
-	channel := make(chan bool)
-	ip_address := "192.168.1.1"
+	fmt.Println("Starting GoMap (https://github.com/adehlbom/GoMap) at " + time.Now().Local().String())
+	ip_address := "45.33.32.156"
 	end_port := checkFlags()
-	for port := 0; port <= end_port; port++ {
-		go tcp_scan(ip_address, port, channel)
-		activeThreads++
+	for port := 1; port <= end_port; port++ {
+		wg.Add(1)
+		go tcp_scan(ip_address, port)
 
 	}
-	for activeThreads > 0 {
-		<-channel
-		activeThreads--
+	wg.Wait()
 
-	}
-	fmt.Println("All done VÄlkommen åter")
+	fmt.Println("All scanned.")
 
 }
-
-func checkFlags() int {
-	if slices.Contains(os.Args, "-s") {
-		return 1024
-	} else if slices.Contains(os.Args, "-f") {
-		return 65535
-	}
-	return 0
-}
-
-func tcp_scan(ip_address string, port int, channel chan bool) {
-
+func tcp_scan(ip_address string, port int) string {
+	defer wg.Done()
 	address := fmt.Sprintf("%s:%d", ip_address, port)
-	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
-
+	conn, err := net.DialTimeout("tcp", address, 1*time.Second)
 	if err != nil {
-		//fmt.Printf("Port %d is closed\n", arr[i])
-		channel <- true
-		return
+		fmt.Println(err)
+		//conn.Close()
+		return ""
 	}
 	buffer := make([]byte, 4096)
 	conn.SetReadDeadline(time.Now().Add(time.Second * 5))
-	numbytesread, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Println(err)
-		channel <- true
-		return
+	numbytesread, err2 := conn.Read(buffer)
+	if err2 != nil {
+		fmt.Println(err2)
+		//conn.Close()
+		return ""
 	}
-	conn.Close()
-	//log.Printf("Banner from port %d\n%s\n", successful_ports[i], buffer[0:numbytesread])
 	fmt.Printf("Port %d open\n", port)
 	fmt.Println(string(buffer[0:numbytesread]))
-	if strings.Contains(strings.ToLower(string(buffer[0:numbytesread])), "ssh") {
-		test_ssh(ip_address, port)
-	}
-	fmt.Println("------------------")
+	conn.Close()
+
+	return string(buffer[0:numbytesread])
+	// Hur och var använder jag defer conn.Close här när jag har flera if-satser som körs efter varandra?
+	//fmt.Println(string(buffer[0:numbytesread]))
 
 	//what_service := netdb.ServiceByPort(i, "tcp")
 	//fmt.Println(fmt.Sprint(what_service.Port) + " " + what_service.Name + " OPEN")
@@ -89,4 +74,17 @@ func test_ssh(ip_address string, port int) {
 	}
 	conn.Close()
 
+}
+
+func checkFlags() int {
+	if slices.Contains(os.Args, "-s") {
+		return 1024
+	} else if slices.Contains(os.Args, "-f") {
+		return 65535
+	} else if slices.Contains(os.Args, "-ip") {
+
+	} else if slices.Contains(os.Args, "-h") {
+
+	}
+	return 0
 }
