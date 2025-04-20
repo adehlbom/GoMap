@@ -3,10 +3,11 @@ package types
 
 // SubnetInfo contains information about a network subnet
 type SubnetInfo struct {
-	IPAddress    string `json:"ip_address"`
-	Netmask      string `json:"netmask"`
-	Gateway      string `json:"gateway"`
-	CIDRNotation string `json:"cidr_notation"`
+	InterfaceName string `json:"interface_name"`
+	IPAddress     string `json:"ip_address"`
+	SubnetMask    string `json:"netmask"`
+	Gateway       string `json:"gateway"`
+	CIDRNotation  string `json:"cidr_notation"`
 }
 
 // HostResult represents information about a discovered host
@@ -17,6 +18,7 @@ type HostResult struct {
 	RTT       float64 `json:"rtt"`
 	MAC       string  `json:"mac,omitempty"`
 	Vendor    string  `json:"vendor,omitempty"`
+	OpenPorts int     `json:"open_ports"`
 }
 
 // NetworkNode represents a node in the network visualization

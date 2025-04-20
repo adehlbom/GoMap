@@ -1,3 +1,4 @@
+// filepath: /Users/andersdehlbom/Coding/Privat/GoMap/scanner_bridge_new.go
 package main
 
 import (
@@ -6,35 +7,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"GoMap/types" // Import the types package
 )
 
-// SubnetInfo contains information about a detected subnet
-// Copied from src/network_utils.go to ensure type compatibility
-type SubnetInfo struct {
-	InterfaceName string
-	IPAddress     string
-	SubnetMask    string
-	CIDRNotation  string // e.g., 192.168.1.0/24
-	Gateway       string // May be empty if not detected
-}
-
-// HostResult represents a scanned host with its status and information
-// Copied from src/host_discovery.go to ensure type compatibility
-type HostResult struct {
-	IPAddress string
-	Hostname  string
-	Status    string
-	OpenPorts int
-}
-
 // GetDefaultLocalSubnet returns the primary local subnet (usually the one with internet access)
-func GetDefaultLocalSubnet() (SubnetInfo, error) {
+func GetDefaultLocalSubnet() (types.SubnetInfo, error) {
 	// Find all local subnets
-	var subnets []SubnetInfo
+	var subnets []types.SubnetInfo
 
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return SubnetInfo{}, err
+		return types.SubnetInfo{}, err
 	}
 
 	for _, iface := range interfaces {
@@ -70,7 +54,7 @@ func GetDefaultLocalSubnet() (SubnetInfo, error) {
 			// Get CIDR notation
 			cidr := ipNet.String()
 
-			subnet := SubnetInfo{
+			subnet := types.SubnetInfo{
 				InterfaceName: iface.Name,
 				IPAddress:     ipNet.IP.String(),
 				SubnetMask:    net.IP(ipNet.Mask).String(),
@@ -82,7 +66,7 @@ func GetDefaultLocalSubnet() (SubnetInfo, error) {
 	}
 
 	if len(subnets) == 0 {
-		return SubnetInfo{}, nil
+		return types.SubnetInfo{}, nil
 	}
 
 	// Prioritize typical home/office network subnets over others
@@ -99,8 +83,8 @@ func GetDefaultLocalSubnet() (SubnetInfo, error) {
 }
 
 // pingHost checks if a host is active and returns a HostResult
-func pingHost(ip string, timeout time.Duration) HostResult {
-	result := HostResult{
+func pingHost(ip string, timeout time.Duration) types.HostResult {
+	result := types.HostResult{
 		IPAddress: ip,
 		Status:    "Inactive",
 		OpenPorts: 0,

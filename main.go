@@ -221,7 +221,17 @@ func runNetworkScan(subnetOverride string, portRangeStr string) (ScanResult, err
 		}
 	} else {
 		// Auto-detect subnet
-		subnet, err = GetDefaultLocalSubnet()
+		subnetInfo, err := GetDefaultLocalSubnet()
+		if err == nil {
+			// Convert from scanner_bridge SubnetInfo to local SubnetInfo
+			subnet = SubnetInfo{
+				InterfaceName: subnetInfo.InterfaceName,
+				IPAddress:     subnetInfo.IPAddress,
+				SubnetMask:    subnetInfo.SubnetMask,
+				CIDRNotation:  subnetInfo.CIDRNotation,
+				Gateway:       subnetInfo.Gateway,
+			}
+		}
 		if err != nil {
 			return result, fmt.Errorf("subnet detection failed: %v", err)
 		}
@@ -328,8 +338,16 @@ func discoverLiveHosts(ips []string) ([]HostResult, error) {
 			result := pingHost(ipAddr, 1*time.Second)
 
 			if result.Status == "Active" {
+				// Convert from types.HostResult to local HostResult
+				localResult := HostResult{
+					IPAddress: result.IPAddress,
+					Hostname:  result.Hostname,
+					Status:    result.Status,
+					OpenPorts: result.OpenPorts,
+				}
+
 				mu.Lock()
-				results = append(results, result)
+				results = append(results, localResult)
 				mu.Unlock()
 			}
 		}(ip)
@@ -496,156 +514,4 @@ func saveResultsToJSON(result ScanResult, filePath string) error {
 	}
 
 	return os.WriteFile(filePath, jsonData, 0644)
-}
-
-// GetDefaultLocalSubnet returns the primary local subnet (usually the one with internet access)
-func GetDefaultLocalSubnet() (SubnetInfo, error) {
-	// Find all local subnets
-	var subnets []SubnetInfo
-
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return SubnetInfo{}, err
-	}
-
-	for _, iface := range interfaces {
-		// Skip loopback, non-active, and interfaces without addresses
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			// Check if this is an IP network address
-			ipNet, ok := addr.(*net.IPNet)
-
-			// Skip if it's not an IP network or if it's an IPv6 address
-			if !ok || ipNet.IP.To4() == nil {
-				continue
-			}
-
-			// Skip loopback addresses
-			if ipNet.IP.IsLoopback() {
-				continue
-			}
-
-			// Skip link-local addresses (169.254.x.x)
-			if ipNet.IP[0] == 169 && ipNet.IP[1] == 254 {
-				continue
-			}
-
-			// Get CIDR notation
-			cidr := ipNet.String()
-
-			subnet := SubnetInfo{
-				InterfaceName: iface.Name,
-				IPAddress:     ipNet.IP.String(),
-				SubnetMask:    net.IP(ipNet.Mask).String(),
-				CIDRNotation:  cidr,
-			}
-
-			subnets = append(subnets, subnet)
-		}
-	}
-
-	if len(subnets) == 0 {
-		return SubnetInfo{}, fmt.Errorf("no active network interfaces found")
-	}
-
-	// Prioritize typical home/office network subnets over others
-	for _, subnet := range subnets {
-		// Typical home/office subnets often begin with 192.168 or 10
-		if strings.HasPrefix(subnet.IPAddress, "192.168.") ||
-			strings.HasPrefix(subnet.IPAddress, "10.") {
-			return subnet, nil
-		}
-	}
-
-	// If no specific type of subnet found, return the first one
-	return subnets[0], nil
-}
-
-// pingHost checks if a host is active and returns a HostResult
-func pingHost(ip string, timeout time.Duration) HostResult {
-	result := HostResult{
-		IPAddress: ip,
-		Status:    "Inactive",
-		OpenPorts: 0,
-	}
-
-	// First try TCP ports to determine if host is active
-	commonPorts := []int{80, 443, 22, 3389, 21, 23, 25, 53, 8080}
-	for _, port := range commonPorts {
-		address := net.JoinHostPort(ip, strconv.Itoa(port))
-		conn, err := net.DialTimeout("tcp", address, timeout/2)
-		if err == nil {
-			conn.Close()
-			result.Status = "Active"
-			result.OpenPorts++
-			break // Found an open port, no need to check more
-		}
-	}
-
-	// Try to resolve hostname if host is active
-	if result.Status == "Active" {
-		// Try DNS lookup
-		names, err := net.LookupAddr(ip)
-		if err == nil && len(names) > 0 {
-			result.Hostname = strings.TrimSuffix(names[0], ".")
-		} else {
-			result.Hostname = "Unknown"
-		}
-	}
-
-	return result
-}
-
-// getServiceNameByPort returns the service name typically associated with a port
-func getServiceNameByPort(port int) string {
-	// Map of common ports to their service names
-	portMap := map[int]string{
-		20:   "FTP-data",
-		21:   "FTP",
-		22:   "SSH",
-		23:   "Telnet",
-		25:   "SMTP",
-		53:   "DNS",
-		67:   "DHCP",
-		68:   "DHCP",
-		80:   "HTTP",
-		110:  "POP3",
-		123:  "NTP",
-		137:  "NetBIOS",
-		138:  "NetBIOS",
-		139:  "NetBIOS",
-		143:  "IMAP",
-		161:  "SNMP",
-		162:  "SNMP",
-		389:  "LDAP",
-		443:  "HTTPS",
-		445:  "SMB",
-		465:  "SMTPS",
-		514:  "Syslog",
-		587:  "SMTP",
-		636:  "LDAPS",
-		993:  "IMAPS",
-		995:  "POP3S",
-		1433: "MSSQL",
-		1521: "Oracle DB",
-		3306: "MySQL",
-		3389: "RDP",
-		5432: "PostgreSQL",
-		8080: "HTTP-Alt",
-		8443: "HTTPS-Alt",
-	}
-
-	if service, exists := portMap[port]; exists {
-		return service
-	}
-
-	return "Unknown"
 }

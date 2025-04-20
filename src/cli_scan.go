@@ -14,7 +14,93 @@ import (
 	"GoMap/types"
 )
 
-// RunCLIScan handles the CLI scan command with all options
+// HandleCLICommands processes command-line arguments and executes the appropriate action
+func HandleCLICommands(args []string) {
+	if len(args) == 0 {
+		PrintHelp()
+		os.Exit(1)
+	}
+
+	command := args[0]
+
+	switch command {
+	case "scan":
+		// Execute network scan using our built-in functionality
+		fmt.Println("Starting network scan...")
+		ExecuteNetworkScan(args[1:])
+	case "help":
+		PrintHelp()
+	default:
+		fmt.Printf("Unknown command: %s\n", command)
+		PrintHelp()
+		os.Exit(1)
+	}
+}
+
+// PrintHelp displays usage information for command-line operation
+func PrintHelp() {
+	fmt.Println("Usage: gomap [command] [options]")
+	fmt.Println("\nCommands:")
+	fmt.Println("  scan            Perform subnet discovery, host discovery, and port scanning")
+	fmt.Println("  help            Display this help message")
+	fmt.Println("\nOptions for 'scan':")
+	fmt.Println("  --output, -o    Specify output file path for JSON results")
+	fmt.Println("  --ports, -p     Specify port range (e.g., 20-1024, default)")
+	fmt.Println("  --subnet, -s    Specify subnet to scan (e.g., 192.168.1.0/24)")
+	fmt.Println("                  If not specified, auto-detection will be used")
+	fmt.Println("\nExamples:")
+	fmt.Println("  gomap scan")
+	fmt.Println("  gomap scan -o results.json")
+	fmt.Println("  gomap scan -p 1-1000 -s 10.0.0.0/24")
+}
+
+// ExecuteNetworkScan performs a full network scan (subnet detection, host discovery, port scanning)
+func ExecuteNetworkScan(args []string) {
+	var outputFile string
+	var portRange string = "20-1024" // Default port range
+	var subnetOverride string
+
+	// Parse scan command options
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--output", "-o":
+			if i+1 < len(args) {
+				outputFile = args[i+1]
+				i++
+			}
+		case "--ports", "-p":
+			if i+1 < len(args) {
+				portRange = args[i+1]
+				i++
+			}
+		case "--subnet", "-s":
+			if i+1 < len(args) {
+				subnetOverride = args[i+1]
+				i++
+			}
+		}
+	}
+
+	// Run the network scan workflow
+	results, err := runNetworkScan(subnetOverride, portRange)
+	if err != nil {
+		fmt.Printf("Error during scan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display results to console
+	displayScanResults(results)
+
+	// Save results to file if specified
+	if outputFile != "" {
+		err := saveResultsToJSON(results, outputFile)
+		if err != nil {
+			fmt.Printf("Error saving results to file: %v\n", err)
+		} else {
+			fmt.Printf("Results saved to %s\n", outputFile)
+		}
+	}
+}
 func RunCLIScan(args []string) {
 	var outputFile string
 	var portRange string = "20-1024" // Default port range

@@ -27,12 +27,15 @@ type RecentScan struct {
 	Duration    time.Duration
 }
 
-// HostResult struct imported from main package
+// HostResult struct must match the one in types/network_types.go
 type HostResult struct {
-	IPAddress string
-	Hostname  string
-	Status    string
-	OpenPorts int
+	IPAddress string  `json:"ip_address"`
+	Hostname  string  `json:"hostname"`
+	Status    string  `json:"status"`
+	RTT       float64 `json:"rtt"`
+	MAC       string  `json:"mac,omitempty"`
+	Vendor    string  `json:"vendor,omitempty"`
+	OpenPorts int     `json:"open_ports"`
 }
 
 // Global variables for GUI components that need to be accessed from different functions

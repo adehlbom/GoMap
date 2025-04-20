@@ -53,7 +53,7 @@ func GetLocalSubnets() ([]types.SubnetInfo, error) {
 
 			subnet := types.SubnetInfo{
 				IPAddress:    ipNet.IP.String(),
-				Netmask:      net.IP(ipNet.Mask).String(),
+				SubnetMask:   net.IP(ipNet.Mask).String(),
 				CIDRNotation: cidr,
 			}
 
