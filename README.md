@@ -15,7 +15,7 @@ A comprehensive network scanning tool written in Go with both GUI and command-li
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/GoMap.git
+git clone https://github.com/adehlbom/GoMap.git
 cd GoMap
 go mod download
 ```
