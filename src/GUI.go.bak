@@ -1,0 +1,702 @@
+// filepath: /Users/andersdehlbom/Coding/Privat/GoMap/src/GUI_fixed.go
+package main
+
+import (
+	"fmt"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
+)
+
+// ScanResult stores information about scanned ports
+type ScanResult struct {
+	Port    int
+	Status  string
+	Service string
+}
+
+// Global variables for GUI components that need to be accessed from different functions
+var (
+	resultsList     *widget.List
+	hostResultsList *widget.List
+	progressBar     *widget.ProgressBar
+	scanResults     []ScanResult
+	hostResults     []HostResult
+	portRangeMin    = 1
+	portRangeMax    = 1024
+	scanActive      = false
+	timeoutDuration = 5 * time.Second
+	currentScanMode = "port" // "port" or "host"
+	scanConfig      = make(map[string]interface{})
+	tabs            *container.AppTabs
+)
+
+// createToolbar creates a toolbar with scan options and help
+func createToolbar() *widget.Toolbar {
+	return widget.NewToolbar(
+		widget.NewToolbarAction(theme.SearchIcon(), func() {
+			// Start scan based on current mode
+			if currentScanMode == "port" && len(ip_address) > 0 {
+				startScan(ip_address, portRangeMin, portRangeMax)
+			} else {
+				// Default to the first tab (port scan)
+				if tabs != nil {
+					tabs.SelectIndex(0)
+				}
+			}
+		}),
+		widget.NewToolbarSeparator(),
+		widget.NewToolbarAction(theme.InfoIcon(), func() {
+			showHelp()
+		}),
+		widget.NewToolbarAction(theme.CancelIcon(), func() {
+			if scanActive {
+				cancelScan()
+			}
+		}),
+		widget.NewToolbarSeparator(),
+		widget.NewToolbarAction(theme.DocumentSaveIcon(), func() {
+			if currentScanMode == "port" && len(scanResults) > 0 {
+				exportScanResults()
+			} else if currentScanMode == "host" && len(hostResults) > 0 {
+				exportHostResults()
+			} else {
+				showErrorDialog("No results to export")
+			}
+		}),
+	)
+}
+
+// defaultGUI creates the main GUI elements
+func defaultGUI() fyne.CanvasObject {
+	// Create tabs container
+	tabs = container.NewAppTabs(
+		container.NewTabItem("Port Scanner", createPortScannerTab()),
+		container.NewTabItem("Host Discovery", createHostDiscoveryTab()),
+		container.NewTabItem("Settings", createSettingsTab()),
+	)
+
+	// Track tab changes
+	tabs.OnChanged = func(tab *container.TabItem) {
+		if tab.Text == "Port Scanner" {
+			currentScanMode = "port"
+		} else if tab.Text == "Host Discovery" {
+			currentScanMode = "host"
+		}
+	}
+
+	// Progress bar at the bottom
+	progressBar = widget.NewProgressBar()
+
+	// Toolbar at the top
+	toolbar := createToolbar()
+
+	// Combine all elements
+	return container.NewBorder(
+		toolbar,
+		progressBar,
+		nil, nil,
+		tabs,
+	)
+}
+
+// createPortScannerTab builds the port scanner interface
+func createPortScannerTab() fyne.CanvasObject {
+	// IP Address input
+	ipEntry := widget.NewEntryWithData(binding.BindString(&ip_address))
+	ipEntry.SetPlaceHolder("Enter IP address (e.g. 192.168.1.1)")
+
+	// Port range selection
+	portRangeSelect := widget.NewSelect([]string{"Quick (1-1024)", "Default (1-10000)", "Full (1-65535)", "Custom"}, func(selected string) {
+		switch selected {
+		case "Quick (1-1024)":
+			portRangeMin = 1
+			portRangeMax = 1024
+		case "Default (1-10000)":
+			portRangeMin = 1
+			portRangeMax = 10000
+		case "Full (1-65535)":
+			portRangeMin = 1
+			portRangeMax = 65535
+		case "Custom":
+			showPortRangeDialog()
+		}
+	})
+	portRangeSelect.SetSelected("Quick (1-1024)")
+
+	// Scan profiles
+	scanProfileSelect := widget.NewSelect([]string{
+		"Default",
+		"Common Services Only",
+		"Full TCP Connect",
+		"Aggressive",
+	}, func(selected string) {
+		scanConfig["profile"] = selected
+	})
+	scanProfileSelect.SetSelected("Default")
+
+	// Scan button
+	scanButton := widget.NewButton("Start Port Scan", func() {
+		if len(ip_address) > 0 {
+			currentScanMode = "port"
+			startScan(ip_address, portRangeMin, portRangeMax)
+		} else {
+			showErrorDialog("Please enter an IP address")
+		}
+	})
+
+	// Results list
+	scanResults = []ScanResult{}
+	resultsList = widget.NewList(
+		func() int {
+			return len(scanResults)
+		},
+		func() fyne.CanvasObject {
+			return container.NewHBox(
+				widget.NewLabel("Port"),
+				widget.NewLabel("Status"),
+				widget.NewLabel("Service"),
+			)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			result := scanResults[id]
+			labels := obj.(*fyne.Container).Objects
+			labels[0].(*widget.Label).SetText(fmt.Sprintf("%d", result.Port))
+			labels[1].(*widget.Label).SetText(result.Status)
+			labels[2].(*widget.Label).SetText(result.Service)
+		},
+	)
+
+	// Export button
+	exportButton := widget.NewButton("Export Results", func() {
+		if len(scanResults) > 0 {
+			exportScanResults()
+		} else {
+			showErrorDialog("No results to export")
+		}
+	})
+
+	resultsContainer := container.NewBorder(
+		widget.NewLabel("Results - Port | Status | Service"),
+		container.NewHBox(layout.NewSpacer(), exportButton),
+		nil, nil,
+		container.NewVScroll(resultsList),
+	)
+
+	// Main layout
+	inputForm := container.NewVBox(
+		widget.NewLabel("Target IP Address:"),
+		ipEntry,
+		widget.NewLabel("Port Range:"),
+		portRangeSelect,
+		widget.NewLabel("Scan Profile:"),
+		scanProfileSelect,
+		container.NewHBox(layout.NewSpacer(), scanButton, layout.NewSpacer()),
+	)
+
+	// Combine elements
+	return container.NewVSplit(
+		container.NewPadded(inputForm),
+		container.NewPadded(resultsContainer),
+	)
+}
+
+// createHostDiscoveryTab builds the host discovery interface
+func createHostDiscoveryTab() fyne.CanvasObject {
+	// IP Range input
+	ipRangeEntry := widget.NewEntry()
+	ipRangeEntry.SetPlaceHolder("Enter IP range (e.g. 192.168.1.1-192.168.1.254 or 192.168.1.0/24)")
+
+	// Host discovery method selection
+	methodSelect := widget.NewSelect([]string{"TCP Ping", "ICMP Ping (requires admin/root)", "Combined"}, nil)
+	methodSelect.SetSelected("TCP Ping")
+
+	// Timeout slider
+	timeoutSlider := widget.NewSlider(1, 10)
+	timeoutSlider.SetValue(5)
+	timeoutSlider.OnChanged = func(value float64) {
+		scanConfig["hostTimeout"] = time.Duration(value) * time.Second
+	}
+	timeoutValue := widget.NewLabel("5 sec")
+	timeoutSlider.OnChanged = func(value float64) {
+		timeoutValue.SetText(fmt.Sprintf("%.0f sec", value))
+		scanConfig["hostTimeout"] = time.Duration(value) * time.Second
+	}
+
+	// Scan button
+	scanButton := widget.NewButton("Start Host Discovery", func() {
+		if len(ipRangeEntry.Text) > 0 {
+			currentScanMode = "host"
+			startIPRange, endIPRange, err := parseIPRange(ipRangeEntry.Text)
+			if err != nil {
+				showErrorDialog("Invalid IP range: " + err.Error())
+				return
+			}
+
+			timeout := time.Duration(timeoutSlider.Value) * time.Second
+			startHostDiscovery(startIPRange, endIPRange, timeout)
+		} else {
+			showErrorDialog("Please enter an IP range")
+		}
+	})
+
+	// Track selected host
+	var selectedHostIndex int = -1
+
+	// Results list for hosts
+	hostResults = []HostResult{}
+	hostResultsList = widget.NewList(
+		func() int {
+			return len(hostResults)
+		},
+		func() fyne.CanvasObject {
+			return container.NewHBox(
+				widget.NewLabel("IP Address"),
+				widget.NewLabel("Hostname"),
+				widget.NewLabel("Status"),
+				widget.NewLabel("Open Ports"),
+			)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			result := hostResults[id]
+			labels := obj.(*fyne.Container).Objects
+			labels[0].(*widget.Label).SetText(result.IPAddress)
+			labels[1].(*widget.Label).SetText(result.Hostname)
+			labels[2].(*widget.Label).SetText(result.Status)
+			labels[3].(*widget.Label).SetText(strconv.Itoa(result.OpenPorts))
+		},
+	)
+
+	// Add selection handling
+	hostResultsList.OnSelected = func(id widget.ListItemID) {
+		selectedHostIndex = int(id)
+	}
+	hostResultsList.OnUnselected = func(id widget.ListItemID) {
+		selectedHostIndex = -1
+	}
+
+	// Export button
+	exportButton := widget.NewButton("Export Results", func() {
+		if len(hostResults) > 0 {
+			exportHostResults()
+		} else {
+			showErrorDialog("No results to export")
+		}
+	})
+
+	// Scan selected host button
+	scanSelectedButton := widget.NewButton("Scan Selected Host", func() {
+		if selectedHostIndex >= 0 && selectedHostIndex < len(hostResults) {
+			selected := hostResults[selectedHostIndex]
+			ip_address = selected.IPAddress
+			// Switch to port scanner tab
+			tabs.SelectIndex(0)
+			// Start scan
+			currentScanMode = "port"
+			startScan(ip_address, portRangeMin, portRangeMax)
+		} else {
+			showErrorDialog("Please select a host to scan")
+		}
+	})
+
+	resultsContainer := container.NewBorder(
+		widget.NewLabel("Discovered Hosts"),
+		container.NewHBox(layout.NewSpacer(), scanSelectedButton, exportButton),
+		nil, nil,
+		container.NewVScroll(hostResultsList),
+	)
+
+	// Main layout
+	inputForm := container.NewVBox(
+		widget.NewLabel("IP Range:"),
+		ipRangeEntry,
+		widget.NewLabel("Discovery Method:"),
+		methodSelect,
+		container.NewHBox(widget.NewLabel("Timeout:"), timeoutSlider, timeoutValue),
+		container.NewHBox(layout.NewSpacer(), scanButton, layout.NewSpacer()),
+	)
+
+	// Combine elements
+	return container.NewVSplit(
+		container.NewPadded(inputForm),
+		container.NewPadded(resultsContainer),
+	)
+}
+
+// createSettingsTab builds the settings interface
+func createSettingsTab() fyne.CanvasObject {
+	// Max parallel scans
+	parallelSlider := widget.NewSlider(10, 500)
+	parallelSlider.SetValue(100)
+	parallelValue := widget.NewLabel("100")
+	parallelSlider.OnChanged = func(value float64) {
+		parallelValue.SetText(fmt.Sprintf("%.0f", value))
+		scanConfig["maxParallel"] = int(value)
+	}
+
+	// Default timeout
+	timeoutSlider := widget.NewSlider(1, 20)
+	timeoutSlider.SetValue(5)
+	timeoutValue := widget.NewLabel("5 sec")
+	timeoutSlider.OnChanged = func(value float64) {
+		timeoutValue.SetText(fmt.Sprintf("%.0f sec", value))
+		timeoutDuration = time.Duration(value) * time.Second
+	}
+
+	// Save settings button
+	saveButton := widget.NewButton("Save Settings", func() {
+		// Save settings to configuration file (implement later)
+		showInfoDialog("Settings saved")
+	})
+
+	// Return the settings form
+	return container.NewVBox(
+		container.NewPadded(widget.NewForm(
+			widget.NewFormItem("Max Parallel Scans",
+				container.NewHBox(parallelSlider, parallelValue)),
+			widget.NewFormItem("Default Timeout (seconds)",
+				container.NewHBox(timeoutSlider, timeoutValue)),
+		)),
+		container.NewHBox(layout.NewSpacer(), saveButton, layout.NewSpacer()),
+		widget.NewLabel(""), // Spacer
+		widget.NewLabel("GoMap - Network Scanner"),
+		widget.NewLabel("Version 1.0"),
+		widget.NewLabel("© 2025 | https://github.com/adehlbom/GoMap"),
+	)
+}
+
+// startScan initiates a port scan
+func startScan(ip string, minPort, maxPort int) {
+	if scanActive {
+		return
+	}
+
+	scanActive = true
+	scanResults = []ScanResult{}
+	resultsList.Refresh()
+	progressBar.SetValue(0)
+
+	// Start the scan in a goroutine
+	go func() {
+		totalPorts := maxPort - minPort + 1
+		portsDone := 0
+
+		// Initialize wait group
+		wg := sync.WaitGroup{}
+		wg.Add(totalPorts)
+
+		// Limit concurrency
+		maxConcurrent := 100
+		if val, ok := scanConfig["maxParallel"]; ok {
+			if intVal, ok := val.(int); ok && intVal > 0 {
+				maxConcurrent = intVal
+			}
+		}
+		semaphore := make(chan struct{}, maxConcurrent)
+
+		// Start scan for each port
+		for port := minPort; port <= maxPort; port++ {
+			semaphore <- struct{}{} // Acquire token
+
+			go func(p int) {
+				defer func() {
+					<-semaphore // Release token
+					portsDone++
+					progress := float64(portsDone) / float64(totalPorts)
+					progressBar.SetValue(progress)
+					wg.Done()
+				}()
+
+				scan(ip, p)
+			}(port)
+		}
+
+		// Wait for all scans to complete
+		wg.Wait()
+		scanActive = false
+
+		// Show completion message
+		showInfoDialog(fmt.Sprintf("Scan complete. Found %d open ports.", len(scanResults)))
+	}()
+}
+
+// scan performs the actual port scan and updates the results
+func scan(ip string, port int) {
+	result := tcp_scan_gui(ip, port)
+	if result.Status == "OPEN" {
+		// Add to results and update UI
+		scanResults = append(scanResults, result)
+		resultsList.Refresh()
+	}
+}
+
+// tcp_scan_gui is a modified version of tcp_scan for the GUI
+func tcp_scan_gui(ip_address string, port int) ScanResult {
+	result := ScanResult{
+		Port:    port,
+		Status:  "CLOSED",
+		Service: "",
+	}
+
+	// Use JoinHostPort which handles both IPv4 and IPv6 correctly
+	address := net.JoinHostPort(ip_address, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", address, timeoutDuration)
+	if err != nil {
+		return result
+	}
+
+	// Port is open
+	result.Status = "OPEN"
+
+	// Try to get service information
+	serviceName := getServiceName(port)
+	if serviceName != "" {
+		result.Service = serviceName
+	} else {
+		// Try banner grabbing
+		buffer := make([]byte, 4096)
+		conn.SetReadDeadline(time.Now().Add(timeoutDuration))
+		numBytesRead, err := conn.Read(buffer)
+		if err == nil && numBytesRead > 0 {
+			// Use cleanBanner function from port_scan.go
+			banner := string(buffer[0:numBytesRead])
+			// Limit length for display
+			if len(banner) > 50 {
+				banner = banner[:50] + "..."
+			}
+			result.Service = banner
+		}
+	}
+
+	conn.Close()
+	return result
+}
+
+// showHelp displays a help dialog
+func showHelp() {
+	helpWindow := fyne.CurrentApp().NewWindow("GoMap Help")
+	helpText := widget.NewLabel("GoMap - Network Port Scanner\n\n" +
+		"Port Scanner Tab:\n" +
+		"• Enter an IP address and select a scan range\n" +
+		"• Choose a scan profile for different scanning strategies\n" +
+		"• Click 'Start Port Scan' to begin scanning\n\n" +
+		"Host Discovery Tab:\n" +
+		"• Enter an IP range in CIDR format (192.168.1.0/24) or range format (192.168.1.1-192.168.1.254)\n" +
+		"• Select a discovery method and timeout\n" +
+		"• Click 'Start Host Discovery' to find active hosts\n" +
+		"• Select a host and click 'Scan Selected Host' to perform a port scan\n\n" +
+		"Settings Tab:\n" +
+		"• Adjust parallel scan limit and timeouts\n" +
+		"• Save settings for future sessions\n\n" +
+		"GitHub: https://github.com/adehlbom/GoMap")
+	helpText.Wrapping = fyne.TextWrapWord
+
+	closeButton := widget.NewButton("Close", func() {
+		helpWindow.Close()
+	})
+
+	helpWindow.SetContent(container.NewBorder(nil, container.NewHBox(layout.NewSpacer(), closeButton, layout.NewSpacer()), nil, nil, helpText))
+	helpWindow.Resize(fyne.NewSize(500, 400))
+	helpWindow.Show()
+}
+
+// showPortRangeDialog displays a dialog for custom port range input
+func showPortRangeDialog() {
+	dialog := widget.NewForm()
+	minEntry := widget.NewEntry()
+	maxEntry := widget.NewEntry()
+
+	minEntry.SetPlaceHolder("1")
+	maxEntry.SetPlaceHolder("65535")
+
+	dialog.Append("Minimum Port", minEntry)
+	dialog.Append("Maximum Port", maxEntry)
+
+	dialog.OnSubmit = func() {
+		min, err1 := strconv.Atoi(minEntry.Text)
+		max, err2 := strconv.Atoi(maxEntry.Text)
+
+		if err1 != nil || err2 != nil {
+			showErrorDialog("Invalid port range. Please enter valid numbers.")
+			return
+		}
+
+		if min < 1 || min > 65535 || max < 1 || max > 65535 || min > max {
+			showErrorDialog("Invalid port range. Ports must be between 1 and 65535, and minimum must be less than maximum.")
+			return
+		}
+
+		portRangeMin = min
+		portRangeMax = max
+	}
+
+	w := fyne.CurrentApp().NewWindow("Custom Port Range")
+	w.SetContent(dialog)
+	w.Resize(fyne.NewSize(300, 200))
+	w.Show()
+}
+
+// showErrorDialog displays an error message
+func showErrorDialog(message string) {
+	dialog.ShowError(fmt.Errorf(message), fyne.CurrentApp().Driver().AllWindows()[0])
+}
+
+// showInfoDialog displays an informational message
+func showInfoDialog(message string) {
+	dialog.ShowInformation("Information", message, fyne.CurrentApp().Driver().AllWindows()[0])
+}
+
+// startHostDiscovery begins a host discovery scan
+func startHostDiscovery(startIP, endIP string, timeout time.Duration) {
+	if scanActive {
+		return
+	}
+
+	scanActive = true
+	hostResults = []HostResult{}
+	hostResultsList.Refresh()
+	progressBar.SetValue(0)
+
+	// Start the scan in a goroutine
+	go func() {
+		// Count estimated hosts
+		hostCount := countHosts(startIP, endIP)
+
+		// Update UI with info
+		fyne.CurrentApp().Driver().AllWindows()[0].SetTitle(
+			fmt.Sprintf("GoMap - Scanning %s (%d hosts)",
+				ipRangeToString(startIP, endIP),
+				hostCount))
+
+		// Run the scan
+		results := scanIPRange(startIP, endIP, timeout)
+
+		// Update results in UI
+		hostResults = results
+		hostResultsList.Refresh()
+
+		// Complete
+		progressBar.SetValue(1.0)
+		scanActive = false
+
+		// Show completion notification
+		fyne.CurrentApp().Driver().AllWindows()[0].SetTitle("GoMap - Network Scanner")
+		showInfoDialog(fmt.Sprintf("Scan completed: Found %d active hosts", len(results)))
+	}()
+}
+
+// cancelScan attempts to cancel an active scan
+func cancelScan() {
+	// In a real implementation, you would need a way to signal goroutines to stop
+	scanActive = false
+}
+
+// exportScanResults exports the port scan results to a CSV file
+func exportScanResults() {
+	if len(scanResults) == 0 {
+		return
+	}
+
+	dialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		if err != nil || writer == nil {
+			return
+		}
+		defer writer.Close()
+
+		// Write CSV header
+		fmt.Fprintf(writer, "IP,Port,Status,Service\n")
+
+		// Write data
+		for _, result := range scanResults {
+			fmt.Fprintf(writer, "%s,%d,%s,%s\n",
+				ip_address, result.Port, result.Status, result.Service)
+		}
+
+		showInfoDialog("Results exported successfully")
+	}, fyne.CurrentApp().Driver().AllWindows()[0])
+
+	dialog.SetFileName("gomap_portscan_" + time.Now().Format("20060102_150405") + ".csv")
+	dialog.Show()
+}
+
+// exportHostResults exports the host discovery results to a CSV file
+func exportHostResults() {
+	if len(hostResults) == 0 {
+		return
+	}
+
+	dialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+		if err != nil || writer == nil {
+			return
+		}
+		defer writer.Close()
+
+		// Write CSV header
+		fmt.Fprintf(writer, "IP Address,Hostname,Status,Open Ports\n")
+
+		// Write data
+		for _, result := range hostResults {
+			fmt.Fprintf(writer, "%s,%s,%s,%d\n",
+				result.IPAddress, result.Hostname, result.Status, result.OpenPorts)
+		}
+
+		showInfoDialog("Results exported successfully")
+	}, fyne.CurrentApp().Driver().AllWindows()[0])
+
+	dialog.SetFileName("gomap_hosts_" + time.Now().Format("20060102_150405") + ".csv")
+	dialog.Show()
+}
+
+// getServiceName returns a common service name for well-known ports
+func getServiceName(port int) string {
+	commonServices := map[int]string{
+		20:   "FTP-data",
+		21:   "FTP",
+		22:   "SSH",
+		23:   "Telnet",
+		25:   "SMTP",
+		53:   "DNS",
+		67:   "DHCP",
+		68:   "DHCP",
+		80:   "HTTP",
+		110:  "POP3",
+		123:  "NTP",
+		137:  "NetBIOS",
+		138:  "NetBIOS",
+		139:  "NetBIOS",
+		143:  "IMAP",
+		161:  "SNMP",
+		162:  "SNMP",
+		389:  "LDAP",
+		443:  "HTTPS",
+		445:  "SMB",
+		465:  "SMTPS",
+		514:  "Syslog",
+		587:  "SMTP",
+		636:  "LDAPS",
+		993:  "IMAPS",
+		995:  "POP3S",
+		1433: "MSSQL",
+		1521: "Oracle DB",
+		3306: "MySQL",
+		3389: "RDP",
+		5432: "PostgreSQL",
+		5900: "VNC",
+		8080: "HTTP-Alt",
+		8443: "HTTPS-Alt",
+	}
+
+	if service, found := commonServices[port]; found {
+		return service
+	}
+	return ""
+}

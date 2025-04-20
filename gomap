@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# GoMap launcher script
+# This script makes it easy to launch GoMap with either the modern or classic UI
+
+# Set the path to the GoMap directory
+GOMAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Print header
+echo "=========================================="
+echo "         GoMap Network Scanner            "
+echo "=========================================="
+
+# Parse arguments
+UI_MODE="modern"
+COMMAND_LINE_ARGS=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --classic|-c)
+      UI_MODE="classic"
+      ;;
+    --help|-h)
+      echo "Usage: ./gomap [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --modern, -m       Use the modern UI (default)"
+      echo "  --classic, -c      Use the classic UI"
+      echo "  --help, -h         Show this help message"
+      echo ""
+      echo "For command line mode, use normal GoMap arguments:"
+      echo "  e.g., -s (scan ports 1-1024), -f (scan all ports)"
+      exit 0
+      ;;
+    *)
+      COMMAND_LINE_ARGS="$COMMAND_LINE_ARGS $arg"
+      ;;
+  esac
+done
+
+# Change to the GoMap directory
+cd "$GOMAP_DIR" || exit 1
+
+# Run GoMap with the selected UI mode
+if [ "$UI_MODE" = "modern" ]; then
+  echo "Starting GoMap with modern UI..."
+  go run src/*.go $COMMAND_LINE_ARGS
+else
+  echo "Starting GoMap with classic UI..."
+  go run src/*.go --classic $COMMAND_LINE_ARGS
+fi
