@@ -5,20 +5,13 @@ import (
 	"errors"
 	"net"
 	"strings"
+
+	"GoMap/types"
 )
 
-// SubnetInfo contains information about a detected subnet
-type SubnetInfo struct {
-	InterfaceName string
-	IPAddress     string
-	SubnetMask    string
-	CIDRNotation  string // e.g., 192.168.1.0/24
-	Gateway       string // May be empty if not detected
-}
-
 // GetLocalSubnets detects all available local subnets on the system
-func GetLocalSubnets() ([]SubnetInfo, error) {
-	var subnets []SubnetInfo
+func GetLocalSubnets() ([]types.SubnetInfo, error) {
+	var subnets []types.SubnetInfo
 
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -58,11 +51,10 @@ func GetLocalSubnets() ([]SubnetInfo, error) {
 			// Get CIDR notation
 			cidr := ipNet.String()
 
-			subnet := SubnetInfo{
-				InterfaceName: iface.Name,
-				IPAddress:     ipNet.IP.String(),
-				SubnetMask:    net.IP(ipNet.Mask).String(),
-				CIDRNotation:  cidr,
+			subnet := types.SubnetInfo{
+				IPAddress:    ipNet.IP.String(),
+				Netmask:      net.IP(ipNet.Mask).String(),
+				CIDRNotation: cidr,
 			}
 
 			subnets = append(subnets, subnet)
@@ -77,10 +69,10 @@ func GetLocalSubnets() ([]SubnetInfo, error) {
 }
 
 // GetDefaultLocalSubnet returns the primary local subnet (usually the one with internet access)
-func GetDefaultLocalSubnet() (SubnetInfo, error) {
+func GetDefaultLocalSubnet() (types.SubnetInfo, error) {
 	subnets, err := GetLocalSubnets()
 	if err != nil {
-		return SubnetInfo{}, err
+		return types.SubnetInfo{}, err
 	}
 
 	// Prioritize typical home/office network subnets over others
@@ -97,11 +89,11 @@ func GetDefaultLocalSubnet() (SubnetInfo, error) {
 		return subnets[0], nil
 	}
 
-	return SubnetInfo{}, errors.New("no suitable subnet found")
+	return types.SubnetInfo{}, errors.New("no suitable subnet found")
 }
 
 // ScanLocalSubnet performs a scan of the local subnet for active hosts
-func ScanLocalSubnet() ([]HostResult, error) {
+func ScanLocalSubnet() ([]types.HostResult, error) {
 	// Get the default local subnet
 	subnet, err := GetDefaultLocalSubnet()
 	if err != nil {
@@ -115,7 +107,17 @@ func ScanLocalSubnet() ([]HostResult, error) {
 	}
 
 	// Perform the scan
-	results := scanIPRange(startIP, endIP, defaultTimeout)
+	localResults := scanIPRange(startIP, endIP, defaultTimeout)
 
-	return results, nil
+	// Convert to our centralized types
+	typedResults := make([]types.HostResult, len(localResults))
+	for i, host := range localResults {
+		typedResults[i] = types.HostResult{
+			IPAddress: host.IPAddress,
+			Hostname:  host.Hostname,
+			Status:    host.Status,
+		}
+	}
+
+	return typedResults, nil
 }

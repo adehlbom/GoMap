@@ -15,7 +15,8 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// ScanResult represents the result of a port scan
+// ScanResult is defined elsewhere in the main package
+// We need to add the Time field to store scan duration
 type ScanResult struct {
 	Port     int
 	Status   string
@@ -23,8 +24,6 @@ type ScanResult struct {
 	Protocol string
 	Time     time.Duration
 }
-
-// HostResult is already defined in host_discovery.go
 
 // startLocalNetworkScan is a helper function to scan the local network with the modern UI
 func startLocalNetworkScan() {
@@ -156,6 +155,7 @@ func startScan(ip string, minPort, maxPort int) {
 	}
 
 	scanActive = true
+	// Clear the existing slice instead of redeclaring
 	scanResults = []ScanResult{}
 
 	// If we have a results table, refresh it
