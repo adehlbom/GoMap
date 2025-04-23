@@ -1,4 +1,3 @@
-// filepath: /Users/andersdehlbom/Coding/Privat/GoMap/scanner_bridge_new.go
 package main
 
 import (
@@ -6,9 +5,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"GoMap/types" // Import the types package
+	"GoMap/types"
 )
 
 // GetDefaultLocalSubnet returns the primary local subnet (usually the one with internet access)
@@ -80,6 +80,137 @@ func GetDefaultLocalSubnet() (types.SubnetInfo, error) {
 
 	// If no specific type of subnet found, return the first one
 	return subnets[0], nil
+}
+
+// NOTE: The functions below are already implemented elsewhere or causing redeclarations.
+// Implementing them as new functions with different names to avoid conflicts.
+
+// ScanNetworkSubnet scans a subnet for active hosts and returns a list of discovered hosts
+// This is an alternative to any existing ScanSubnet function that might exist
+func ScanNetworkSubnet(subnet types.SubnetInfo, concurrency int, timeout time.Duration) []types.HostResult {
+	// Extract network information from CIDR
+	ip, ipNet, err := net.ParseCIDR(subnet.CIDRNotation)
+	if err != nil {
+		return nil
+	}
+
+	var results []types.HostResult
+	var mutex sync.Mutex
+	var wg sync.WaitGroup
+
+	// Use a buffered channel as a semaphore to limit concurrency
+	semaphore := make(chan struct{}, concurrency)
+
+	// Increment the IP address
+	inc := func(ip net.IP) {
+		for j := len(ip) - 1; j >= 0; j-- {
+			ip[j]++
+			if ip[j] > 0 {
+				break
+			}
+		}
+	}
+
+	// Start with the first IP in the subnet
+	for ip := ip.Mask(ipNet.Mask); ipNet.Contains(ip); inc(ip) {
+		// Skip the network and broadcast addresses
+		if ip[len(ip)-1] == 0 || ip[len(ip)-1] == 255 {
+			continue
+		}
+
+		// Copy the IP so it doesn't change during the goroutine execution
+		currentIP := make(net.IP, len(ip))
+		copy(currentIP, ip)
+
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire a semaphore slot
+
+		go func(ip net.IP) {
+			defer func() {
+				<-semaphore // Release a semaphore slot
+				wg.Done()
+			}()
+
+			ipStr := ip.String()
+			result := pingHost(ipStr, timeout)
+
+			if result.Status == "Active" {
+				mutex.Lock()
+				results = append(results, result)
+				mutex.Unlock()
+			}
+		}(currentIP)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// ScanHostPortRange scans a specific host for open ports within the given range
+// This is an alternative to any existing ScanHostPorts function that might exist
+func ScanHostPortRange(host types.HostResult, startPort, endPort int, concurrency int, timeout time.Duration) types.HostResult {
+	var wg sync.WaitGroup
+	var mutex sync.Mutex
+
+	// Use a buffered channel as a semaphore to limit concurrency
+	semaphore := make(chan struct{}, concurrency)
+
+	result := host
+	result.OpenPorts = 0
+	// We'll only track the count since HostResult doesn't have a field for port details
+
+	for port := startPort; port <= endPort; port++ {
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire a semaphore slot
+
+		go func(p int) {
+			defer func() {
+				<-semaphore // Release a semaphore slot
+				wg.Done()
+			}()
+
+			address := net.JoinHostPort(host.IPAddress, strconv.Itoa(p))
+			conn, err := net.DialTimeout("tcp", address, timeout)
+
+			if err != nil {
+				return // Port is closed or filtered
+			}
+
+			// Port is open
+			// Note: We're not saving port details since HostResult doesn't have a field for them
+
+			// Try to get banner if it's a common service that might offer one
+			// Note: We're not saving banners since HostResult doesn't have a field for them
+
+			conn.Close()
+
+			mutex.Lock()
+			result.OpenPorts++
+			mutex.Unlock()
+		}(port)
+	}
+
+	wg.Wait()
+	return result
+}
+
+// DetermineDeviceType attempts to determine the device type based on open ports
+// This is an alternative to any existing GetDeviceType function that might exist
+func DetermineDeviceType(host types.HostResult) string {
+	// Check for common device signatures
+	if host.OpenPorts == 0 {
+		return "Unknown Device"
+	}
+
+	// Since HostResult doesn't have detailed port information,
+	// we can only make a general determination based on the number of open ports
+	if host.OpenPorts > 5 {
+		return "Server or Gateway Device"
+	} else if host.OpenPorts > 2 {
+		return "Workstation or Server"
+	} else {
+		return "End Device"
+	}
 }
 
 // pingHost checks if a host is active and returns a HostResult

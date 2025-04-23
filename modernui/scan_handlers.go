@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,11 +48,22 @@ func startLocalNetworkScan() {
 		progressBar.SetValue(0.2)
 		scanStatus.SetText(fmt.Sprintf("Scanning network %s...", subnet))
 
+		// Debug logging before scan
+		fmt.Printf("DEBUG: Starting scan from %s to %s\n", startIP, endIP)
+
 		// Perform the scan
 		results := scanIPRange(startIP, endIP)
 
+		// Debug logging after scan
+		fmt.Printf("DEBUG: Scan complete. Found %d hosts\n", len(results))
+		for i, host := range results {
+			fmt.Printf("DEBUG: Host %d: IP=%s, Hostname=%s, Status=%s, OpenPorts=%d\n",
+				i, host.IPAddress, host.Hostname, host.Status, host.OpenPorts)
+		}
+
 		// Update results and UI
 		hostResults = results
+		fmt.Printf("DEBUG: Updated hostResults, length: %d\n", len(hostResults))
 
 		// Switch to network tab to show results
 		switchContent("network")
@@ -216,15 +228,44 @@ func intToIP4(nn uint32) net.IP {
 }
 
 // scanIPRange scans a range of IPs for active hosts
-// This is a simplified placeholder that would integrate with the main package's scanning functionality
 func scanIPRange(startIP, endIP string) []HostResult {
-	// In a real implementation, this would use the main package's host discovery functionality
-	// For now, return some sample data
-	results := []HostResult{
-		{IPAddress: "192.168.1.1", Hostname: "router.local", Status: "Active", OpenPorts: 3},
-		{IPAddress: "192.168.1.2", Hostname: "desktop.local", Status: "Active", OpenPorts: 5},
-		{IPAddress: "192.168.1.10", Hostname: "laptop.local", Status: "Active", OpenPorts: 2},
+	var results []HostResult
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Print debug information
+	fmt.Printf("DEBUG: Scanning IP range from %s to %s\n", startIP, endIP)
+
+	// Convert IPs to integers for iteration
+	startIPInt := ipToInt(net.ParseIP(startIP))
+	endIPInt := ipToInt(net.ParseIP(endIP))
+
+	// Rate limiting to avoid overwhelming the network
+	semaphore := make(chan struct{}, 100)
+
+	// Scan each IP in range
+	for ipInt := startIPInt; ipInt <= endIPInt; ipInt++ {
+		wg.Add(1)
+		semaphore <- struct{}{} // acquire token
+
+		go func(ip uint32) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // release token
+
+			ipStr := intToIP4(ip).String()
+			result := pingHost(ipStr, timeoutDuration)
+
+			if result.Status == "Active" {
+				mu.Lock()
+				results = append(results, result)
+				mu.Unlock()
+				fmt.Printf("DEBUG: Found active host: %s (%s)\n", result.IPAddress, result.Hostname)
+			}
+		}(ipInt)
 	}
+
+	wg.Wait()
+	fmt.Printf("DEBUG: Scan complete. Found %d active hosts.\n", len(results))
 	return results
 }
 

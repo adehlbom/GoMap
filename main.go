@@ -97,6 +97,14 @@ func launchApp(useModernUI bool) {
 		mainWindow = goMapApp.NewWindow("GoMap - Network Scanner v2.0")
 		mainWindow.Resize(fyne.NewSize(1024, 768))
 
+		// Create a wrapper function to match the expected ScannerFunc signature
+		scannerWrapper := func(subnetOverride string, portRangeStr string) (interface{}, error) {
+			return runNetworkScan(subnetOverride, portRangeStr)
+		}
+
+		// Register the scanner implementation with the modernui package
+		modernui.RegisterScanner(scannerWrapper)
+
 		// Initialize the modern UI
 		content := modernui.CreateModernUI(mainWindow)
 		mainWindow.SetContent(content)
